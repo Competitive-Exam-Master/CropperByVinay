@@ -10,7 +10,6 @@
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background: #2c2c2c; }
         
-        /* Main Toolbar */
         .toolbar { background: white; padding: 10px; width: 100%; box-sizing: border-box; box-shadow: 0 2px 5px rgba(0,0,0,0.3); z-index: 100; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
         
         button, select, input[type="number"] { padding: 8px 12px; border: 1px solid #ccc; background: #007bff; color: white; border-radius: 5px; font-size: 14px; cursor: pointer; }
@@ -35,7 +34,6 @@
         #delete-btn { background: #dc3545; font-weight: bold; }
         #settings-btn { background: #6c757d; font-weight: bold; }
 
-        /* Collapsible Settings Panel */
         #settings-panel { display: none; background: #e9ecef; padding: 15px; width: 100%; box-sizing: border-box; border-bottom: 2px solid #ccc; flex-wrap: wrap; gap: 15px; justify-content: center; z-index: 99; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.1); }
         #settings-panel.open { display: flex; }
         .settings-section { display: flex; flex-direction: column; align-items: center; gap: 8px; background: white; padding: 10px 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -84,7 +82,6 @@
     </div>
 
     <div id="settings-panel">
-        
         <div class="settings-section">
             <strong>Magnification</strong>
             <div class="control-group" style="background: transparent; padding: 0;">
@@ -111,7 +108,6 @@
             <input type="text" id="title-h2" placeholder="Subtitle (e.g., Chapter 4)">
             <input type="text" id="title-h3" placeholder="Details (e.g., Time: 2 Hrs)">
         </div>
-
     </div>
 
     <div id="canvas-wrapper">
@@ -144,8 +140,15 @@
     
     let globalCreationCounter = 0; 
 
+    // Enhanced Keyboard Deletion Check (Ignores active text fields)
     window.addEventListener('keydown', function(e) {
-        if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName.toLowerCase() !== 'input') {
+        const tag = e.target.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return; 
+        
+        // Block delete if Fabric is actively editing text
+        if (fabricCanvas && fabricCanvas.getActiveObject() && fabricCanvas.getActiveObject().isEditing) return;
+
+        if (e.key === 'Delete' || e.key === 'Backspace') {
             deleteSelectedBox();
         }
     });
@@ -175,8 +178,8 @@
         else { document.getElementById('page-num').value = pageNum; } 
     }
 
-    function zoomIn() { currentZoom += 0.02; fabricCanvas.setZoom(currentZoom); }
-    function zoomOut() { if (currentZoom > 0.2) { currentZoom -= 0.02; fabricCanvas.setZoom(currentZoom); } }
+    function zoomIn() { currentZoom += 0.15; fabricCanvas.setZoom(currentZoom); }
+    function zoomOut() { if (currentZoom > 0.2) { currentZoom -= 0.15; fabricCanvas.setZoom(currentZoom); } }
     function updateWidthDisplay(width) { document.getElementById('box-width-val').innerText = Math.round(width); }
 
     document.getElementById('update-width-btn').addEventListener('click', function() {
@@ -232,7 +235,9 @@
 
                 if (pageBoxes[num]) {
                     pageBoxes[num].forEach(box => {
-                        fabricCanvas.add(box); fabricCanvas.add(box.qData.labelObj);
+                        fabricCanvas.add(box); 
+                        fabricCanvas.add(box.qData.labelObj);
+                        fabricCanvas.add(box.qData.sourceObj); 
                     });
                 } else { pageBoxes[num] = []; }
 
@@ -243,27 +248,16 @@
 
     function setupCanvasInteractions() {
         
-        // 1. Color Change & Live Width Update during Scaling
         fabricCanvas.on('object:scaling', function(e) {
             if (e.target && e.target.type === 'rect') {
-                // Change to Light Red to indicate active scaling
-                e.target.set({
-                    stroke: '#ff4d4d', 
-                    fill: 'rgba(255, 77, 77, 0.15)'
-                });
+                e.target.set({ stroke: '#ff4d4d', fill: 'rgba(255, 77, 77, 0.15)' });
                 updateWidthDisplay(e.target.width * e.target.scaleX);
             }
         });
 
-        // 2. Revert Color & Finalize State on Release
         fabricCanvas.on('object:modified', function(e) {
             if (e.target && e.target.type === 'rect') {
-                // Revert to original blue
-                e.target.set({
-                    stroke: '#007bff', 
-                    fill: 'rgba(0, 123, 255, 0.1)'
-                });
-                
+                e.target.set({ stroke: '#007bff', fill: 'rgba(0, 123, 255, 0.1)' });
                 lastBoxWidth = e.target.width * e.target.scaleX;
                 updateWidthDisplay(lastBoxWidth);
                 renumberAllBoxes(); 
@@ -283,6 +277,10 @@
 
         fabricCanvas.on('mouse:down', function(opt) {
             let evt = opt.e;
+            
+            // Do not trigger canvas drag if tapping on the editable text box
+            if (opt.target && opt.target.type === 'textbox') return;
+
             if (isAddingBoxMode) {
                 const pointer = fabricCanvas.getPointer(evt); 
                 createNewBox(pointer.x, pointer.y);
@@ -357,11 +355,21 @@
     }
 
     function deleteSelectedBox() {
-        const activeObj = fabricCanvas.getActiveObject();
-        if (!activeObj || activeObj.type !== 'rect') return alert("Select a box to delete.");
+        let activeObj = fabricCanvas.getActiveObject();
+        if (!activeObj) return alert("Select a box to delete.");
+
+        // Smart Delete: If user selects the custom text instead of the box, find the parent box to delete
+        if (activeObj.type === 'textbox') {
+            const parentBox = pageBoxes[pageNum].find(b => b.qData.sourceObj === activeObj || b.qData.labelObj === activeObj);
+            if (parentBox) activeObj = parentBox;
+            else return;
+        }
+
+        if (activeObj.type !== 'rect') return alert("Select a box to delete.");
 
         fabricCanvas.remove(activeObj);
         fabricCanvas.remove(activeObj.qData.labelObj);
+        fabricCanvas.remove(activeObj.qData.sourceObj);
 
         const pNum = activeObj.qData.pageNum;
         pageBoxes[pNum] = pageBoxes[pNum].filter(b => b !== activeObj);
@@ -395,8 +403,7 @@
             left: x - (lastBoxWidth / 2), top: y - (STANDARD_NEW_HEIGHT / 2),
             width: lastBoxWidth, height: STANDARD_NEW_HEIGHT,
             fill: 'rgba(0, 123, 255, 0.1)', stroke: '#007bff', strokeWidth: 3, 
-            strokeUniform: true, 
-            objectCaching: false, // Ensures perfectly uniform 3px border mathematical drawing during real-time dragging
+            strokeUniform: true, objectCaching: false, 
             originX: 'left', originY: 'top',
             hasBorders: true, cornerSize: 32, cornerStyle: 'circle', cornerColor: 'rgba(135, 206, 235, 0.85)',
             transparentCorners: false, lockRotation: true, lockScalingFlip: true, lockUniScaling: false,
@@ -410,12 +417,49 @@
             selectable: false, evented: false 
         });
 
-        const syncLabel = () => { textLabel.set({ left: rect.left, top: rect.top - 28 }); fabricCanvas.requestRenderAll(); };
+        // Upgraded Custom Info Box (Single Tap to Edit, Auto-clearing, Word Wrap)
+        const sourceLabel = new fabric.Textbox("(Tap to add info)", {
+            left: rect.left + 50, top: rect.top - 28, 
+            width: 220, fontSize: 16, 
+            fill: '#6c757d', backgroundColor: '#f8f9fa',
+            fontStyle: 'italic', selectable: true, hasControls: false, hasBorders: true, 
+            borderColor: '#28a745', editingBorderColor: '#28a745', padding: 5
+        });
+
+        // Trigger edit mode instantly on selection
+        sourceLabel.on('selected', function() {
+            this.enterEditing();
+        });
+
+        // Automatically clear placeholder text when typing starts
+        sourceLabel.on('editing:entered', function() {
+            if (this.text === "(Tap to add info)") {
+                this.text = ""; 
+                if(this.hiddenTextarea) this.hiddenTextarea.value = ""; // For mobile keyboards
+                this.set({ fill: 'black', fontStyle: 'normal' }); 
+                fabricCanvas.requestRenderAll();
+            }
+        });
+
+        // Bring back placeholder if left completely blank
+        sourceLabel.on('editing:exited', function() {
+            if (this.text.trim() === "") {
+                this.text = "(Tap to add info)"; 
+                this.set({ fill: '#6c757d', fontStyle: 'italic' }); 
+                fabricCanvas.requestRenderAll();
+            }
+        });
+
+        const syncLabel = () => { 
+            textLabel.set({ left: rect.left, top: rect.top - 28 }); 
+            sourceLabel.set({ left: rect.left + 45, top: rect.top - 28 }); 
+            fabricCanvas.requestRenderAll(); 
+        };
         rect.on('moving', syncLabel); rect.on('scaling', syncLabel);
 
-        rect.set('qData', { isSub: false, number: "0", pageNum: pageNum, labelObj: textLabel, creationId: globalCreationCounter });
+        rect.set('qData', { isSub: false, number: "0", pageNum: pageNum, labelObj: textLabel, sourceObj: sourceLabel, creationId: globalCreationCounter });
         
-        fabricCanvas.add(rect, textLabel);
+        fabricCanvas.add(rect, textLabel, sourceLabel);
         fabricCanvas.setActiveObject(rect);
         pageBoxes[pageNum].push(rect);
         
@@ -473,7 +517,7 @@
                 const { jsPDF } = window.jspdf;
                 const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
                 
-                const pageWidth = 210; const pageH = 297; const margin = 5; 
+                const pageWidth = 210; const pageH = 297; const margin = 8; 
                 let currentY = margin;
                 
                 const t1 = document.getElementById('title-h1').value.trim();
@@ -507,18 +551,29 @@
                     let dw = box.displayW; let dh = box.displayH;
                     if (dw > maxImageWidth) { dh = dh * (maxImageWidth / dw); dw = maxImageWidth; }
 
-                    if (currentY + dh > pageH - margin) {
+                    let infoText = box.qData.sourceObj.text.trim();
+                    let hasInfo = infoText !== "" && infoText !== "(Tap to add info)";
+                    let extraY = hasInfo ? 5 : 0; 
+
+                    if (currentY + dh + extraY > pageH - margin) {
                         pdf.addPage();
                         currentY = margin; colIndex = 0; rowMaxH = 0;
                     }
 
                     let currentX = margin + (colIndex * (colWidth + columnGap));
 
+                    if (hasInfo) {
+                        pdf.setFontSize(10);
+                        pdf.setFont('helvetica', 'italic');
+                        pdf.text(infoText, currentX + numberColWidth, currentY + 3);
+                    }
+
                     pdf.setFontSize(12); pdf.setFont('helvetica', 'bold');
-                    pdf.text("Q" + box.qData.number + ".", currentX, currentY + 4);
-                    pdf.addImage(box.croppedImage, 'JPEG', currentX + numberColWidth, currentY, dw, dh);
                     
-                    rowMaxH = Math.max(rowMaxH, dh + 8); 
+                    pdf.text("Q" + box.qData.number + ".", currentX, currentY + extraY + 4);
+                    pdf.addImage(box.croppedImage, 'JPEG', currentX + numberColWidth, currentY + extraY, dw, dh);
+                    
+                    rowMaxH = Math.max(rowMaxH, dh + extraY + 8); 
                     
                     if (colsCount === 2) {
                         if (colIndex === 0) { colIndex = 1; } 
